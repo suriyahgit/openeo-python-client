@@ -3458,18 +3458,13 @@ class TestLoadStac:
                 None,
                 False,
                 {},
-                [
-                    "bands_from_stac_collection: consulting items for band metadata",
-                    "bands_from_stac_collection: no band name source found",
-                ],
+                [],
             ),
             (
                 ["B02", "B03"],
                 True,
                 {"bands": ["B02", "B03"]},
                 [
-                    "bands_from_stac_collection: consulting items for band metadata",
-                    "bands_from_stac_collection: no band name source found",
                     "Bands ['B02', 'B03'] were specified in `load_stac`, but no band dimension was detected in the STAC metadata. Working with band dimension and specified bands.",
                 ],
             ),
@@ -3508,18 +3503,15 @@ class TestLoadStac:
         caplog.set_level(logging.WARNING)
         stac_ref = build_stac_ref(StacDummyBuilder.collection())
 
-        cube = dummy_backend.connection.load_stac(stac_ref, bands=["B01", "B02"])
-        assert cube.metadata.band_names == ["B01", "B02"]
-        assert (
-            # TODO: better warning than confusing "not a subset of the bands []" ?
-            "The specified bands ['B01', 'B02'] in `load_stac` are not a subset of the bands [] found in the STAC metadata (unknown bands: ['B01', 'B02']). Working with specified bands as is."
-            in caplog.text
-        )
+        bands = ["vis0.6", "nir2.2"]
+        cube = dummy_backend.connection.load_stac(stac_ref, bands=bands)
+        assert cube.metadata.band_names == bands
+        assert caplog.text == ""
 
         cube.execute()
         assert dummy_backend.get_pg("load_stac")["arguments"] == {
             "url": stac_ref,
-            "bands": ["B01", "B02"],
+            "bands": bands,
         }
 
     @pytest.mark.parametrize(

@@ -1624,9 +1624,7 @@ class TestStacMetadataParser:
                 },
                 {},
                 [Band("B02"), Band("B03")],
-                [
-                    "bands_from_stac_collection: consulting items for band metadata",
-                ],
+                [],
             ),
             (
                 # Collection with two items with different bands (eo:bands metadata)
@@ -1655,9 +1653,7 @@ class TestStacMetadataParser:
                 },
                 {},
                 [Band("B02"), Band("B03")],
-                [
-                    "bands_from_stac_collection: consulting items for band metadata",
-                ],
+                [],
             ),
             (
                 # Collection with two items with different bands in different metadata format
@@ -1685,9 +1681,7 @@ class TestStacMetadataParser:
                 },
                 {},
                 [Band("B02"), Band("B03")],
-                [
-                    "bands_from_stac_collection: consulting items for band metadata",
-                ],
+                [],
             ),
             (
                 # Collection with one item, with band metadata in asset
@@ -1712,9 +1706,7 @@ class TestStacMetadataParser:
                 },
                 {},
                 [Band("B02")],
-                [
-                    "bands_from_stac_collection: consulting items for band metadata",
-                ],
+                [],
             ),
             (
                 # Collection with multiple items and assets, only partially with band metadata
@@ -1745,9 +1737,7 @@ class TestStacMetadataParser:
                 },
                 {},
                 [Band("B02")],
-                [
-                    "bands_from_stac_collection: consulting items for band metadata",
-                ],
+                [],
             ),
         ],
     )
@@ -2213,7 +2203,7 @@ class TestStacMetadataParser:
         collection = pystac.Collection.from_dict(stac_data)
         actual_bands = _StacMetadataParser().bands_from_stac_collection(collection).band_names()
         assert actual_bands == []
-        assert "bands_from_stac_collection: no band name source found" in caplog.messages
+        assert "bands_from_stac_collection: no band name source found" not in caplog.messages
 
     @pytest.mark.parametrize(
         ["path", "expected"],

@@ -461,7 +461,7 @@ class CubeMetadata:
         return self._clone_and_update(dimensions=self._dimensions + [dim])
 
     def _ensure_band_dimension(
-        self, *, name: Optional[str] = None, bands: List[Union[Band, str]], warning: str
+        self, *, name: Optional[str] = None, bands: List[Union[Band, str]], warning: Optional[str]
     ) -> CubeMetadata:
         """
         Create new CubeMetadata object, ensuring a band dimension with given bands.
@@ -470,12 +470,12 @@ class CubeMetadata:
         For example, to overrule badly/incomplete detected band names from STAC metadata.
 
         .. note::
-            It is required to specify a warning message as this method is only intended
-            to be used as temporary stop-gap solution for use cases that are possibly not future-proof.
-            Enforcing a warning should make that clear and avoid that users unknowingly depend on
-            metadata handling behavior that is not guaranteed to be stable.
+            A warning message should be specified when this method overrules explicit
+            metadata because this behavior might not be future-proof. Pass ``None``
+            only when filling in absent metadata with user-specified bands.
         """
-        _log.warning(warning or "ensure_band_dimension: overriding band dimension metadata with user-defined bands.")
+        if warning:
+            _log.warning(warning)
         if name is None:
             # Preserve original band dimension name if possible
             name = self.band_dimension.name if self.has_band_dimension() else "bands"
@@ -898,7 +898,7 @@ class _StacMetadataParser:
             return self._bands_from_item_assets(item_assets)
         # If no band metadata so far: traverse items in collection
         elif consult_items:
-            self._warn("bands_from_stac_collection: consulting items for band metadata")
+            self._log("bands_from_stac_collection: consulting items for band metadata")
             bands = _BandList.merge(
                 self.bands_from_stac_item(
                     item=i, consult_collection=False, consult_assets=consult_assets, on_empty=_ON_EMPTY_IGNORE
@@ -909,7 +909,7 @@ class _StacMetadataParser:
                 return bands
 
         if on_empty == _ON_EMPTY_WARN:
-            self._warn("bands_from_stac_collection: no band name source found")
+            self._log("bands_from_stac_collection: no band name source found")
         return _BandList([])
 
     def bands_from_stac_item(
