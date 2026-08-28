@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Lookup collection queryables only when property filtering is actually used in `load_collection` ([#926](https://github.com/Open-EO/openeo-python-client/issues/926))
+- The experimental local processing backend (`openeo.local`) now keeps the RasterCube as an `xr.Dataset` instead of converting it to a single `xr.DataArray` (via `to_array(dim="bands")`), aligning with the `xr.Dataset`-based RasterCube contract used by e.g. `openeo-processes-dedl-slim` and `openeo-processes-dedl-cube-load`. Band dimensions are derived from the cube's band dimension (DataArray) or its data variables (Dataset).
 
 ### Removed
 
