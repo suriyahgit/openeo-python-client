@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Clarify UDF documentation on required function type annotations. ([#757](https://github.com/Open-EO/openeo-python-client/issues/757))
 - `OidcProviderInfo` no longer drops requested OIDC scopes (including the "offline_access" scope used for refresh tokens) that are not listed in the provider's `scopes_supported` discovery field, which made it impossible to authenticate against such providers. ([#930](https://github.com/Open-EO/openeo-python-client/issues/930))
+- Make job result downloads resilient to flaky connections/proxies: `ConnectionError`, `Timeout` and `ChunkedEncodingError` (truncated responses) are now retried per (sub)range block with backoff, partial blocks are truncated before a retry, and the default `range_size` was lowered so single transfers stay small enough to complete through proxies that truncate large responses.
 
 ## [0.51.0] - 2026-07-16
 

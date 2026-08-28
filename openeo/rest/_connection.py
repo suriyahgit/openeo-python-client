@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
@@ -54,6 +55,30 @@ RETRIABLE_DOWNLOAD_STATUSCODES = [
     HTTP_503_SERVICE_UNAVAILABLE,
     HTTP_504_GATEWAY_TIMEOUT,
 ]
+
+# Seconds to sleep between retries of a failed (sub)range download. The delay
+# grows linearly with the number of failed attempts.
+DOWNLOAD_RETRY_BACKOFF_SECONDS = 2
+
+
+def _is_retriable_download_error(error: Exception) -> bool:
+    """Whether a download error should be retried.
+
+    HTTP errors are retried when their status code is transient (e.g. 429, 5xx).
+    Connection-level errors -- broken/reset connections, truncated chunked
+    reads, and timeouts -- are always retried because a proxy or flaky network
+    can cut a transfer mid-stream, independent of the HTTP status.
+    """
+    if isinstance(error, OpenEoApiPlainError):
+        return error.http_status_code in RETRIABLE_DOWNLOAD_STATUSCODES
+    return isinstance(
+        error,
+        (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+        ),
+    )
 
 
 class RestApiConnection:
@@ -315,12 +340,29 @@ class RestApiConnection:
             self._download_all_at_once(url=url, target=target, chunk_size=chunk_size)
 
     def _download_all_at_once(self, url: str, target: Path, *, chunk_size: int = DEFAULT_DOWNLOAD_CHUNK_SIZE) -> None:
-        with self.get(path=url, stream=True) as r:
-            r.raise_for_status()
-            ensure_parent_dir_for(target)
-            with target.open("wb") as f:
-                for block in r.iter_content(chunk_size=chunk_size):
-                    f.write(block)
+        tries_left = MAX_DOWNLOAD_RETRIES_PER_RANGE
+        while True:
+            try:
+                with self.get(path=url, stream=True) as r:
+                    r.raise_for_status()
+                    ensure_parent_dir_for(target)
+                    with target.open("wb") as f:
+                        for block in r.iter_content(chunk_size=chunk_size):
+                            f.write(block)
+                break
+            except Exception as error:
+                if not _is_retriable_download_error(error):
+                    raise error
+                tries_left -= 1
+                if tries_left <= 0:
+                    raise error
+                _log.warning(
+                    "Failed to download %s (%s) - retrying (%d attempts left)",
+                    url,
+                    error,
+                    tries_left,
+                )
+                time.sleep(DOWNLOAD_RETRY_BACKOFF_SECONDS * (MAX_DOWNLOAD_RETRIES_PER_RANGE - tries_left))
 
     def _download_ranged(
         self,
@@ -336,7 +378,7 @@ class RestApiConnection:
             for from_byte_index in range(0, file_size, range_size):
                 to_byte_index = min(from_byte_index + range_size - 1, file_size - 1)
                 tries_left = MAX_DOWNLOAD_RETRIES_PER_RANGE
-                while tries_left > 0:
+                while True:
                     try:
                         range_headers = {"Range": f"bytes={from_byte_index}-{to_byte_index}"}
                         with self.get(path=url, headers=range_headers, stream=True) as r:
@@ -344,12 +386,23 @@ class RestApiConnection:
                             for block in r.iter_content(chunk_size=chunk_size):
                                 f.write(block)
                         break
-                    except OpenEoApiPlainError as error:
-                        tries_left -= 1
-                        if tries_left > 0 and error.http_status_code in RETRIABLE_DOWNLOAD_STATUSCODES:
-                            _log.warning(
-                                f"Failed to retrieve chunk {from_byte_index}-{to_byte_index} from {url} (status {error.http_status_code}) - retrying"
-                            )
-                            continue
-                        else:
+                    except Exception as error:
+                        if not _is_retriable_download_error(error):
                             raise error
+                        tries_left -= 1
+                        if tries_left <= 0:
+                            raise error
+                        # A failed attempt may have written partial bytes: truncate
+                        # back to the block start so the retry re-downloads the
+                        # whole block instead of appending to a partial one.
+                        f.seek(from_byte_index)
+                        f.truncate(from_byte_index)
+                        _log.warning(
+                            "Failed to retrieve chunk %s-%s from %s (%s) - retrying (%d attempts left)",
+                            from_byte_index,
+                            to_byte_index,
+                            url,
+                            error,
+                            tries_left,
+                        )
+                        time.sleep(DOWNLOAD_RETRY_BACKOFF_SECONDS * (MAX_DOWNLOAD_RETRIES_PER_RANGE - tries_left))

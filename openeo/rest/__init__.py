@@ -4,7 +4,10 @@ from openeo import BaseOpenEoException
 
 # TODO: get from config file
 DEFAULT_DOWNLOAD_CHUNK_SIZE = 10_000_000  # 10MB
-DEFAULT_DOWNLOAD_RANGE_SIZE = 500_000_000 # 500MB
+# Keep single ranged requests small enough that they complete quickly through
+# proxies/gateways that truncate large transfers (a ~100MB+ request can be cut
+# mid-stream; retries in openeo.rest.job then have to re-download the whole block).
+DEFAULT_DOWNLOAD_RANGE_SIZE = 50_000_000  # 50MB
 
 DEFAULT_JOB_STATUS_POLL_INTERVAL_MAX = 60
 DEFAULT_JOB_STATUS_POLL_CONNECTION_RETRY_INTERVAL = 30

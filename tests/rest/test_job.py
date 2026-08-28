@@ -1017,6 +1017,89 @@ def test_result_asset_download_file_error(con100, requests_mock, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_get_results_download_file_retries_on_connection_error(con100, requests_mock, tmp_path):
+    """A ranged download that is cut mid-transfer retries and succeeds."""
+    content = b"0123456789" * 100  # 1000 bytes
+    requests_mock.get(
+        API_URL + "/jobs/jj1/results",
+        json={"assets": {"1.tiff": {"href": API_URL + "/dl/jjr1.tiff", "type": "image/tiff; application=geotiff"}}},
+    )
+    requests_mock.head(
+        API_URL + "/dl/jjr1.tiff",
+        headers={"Content-Length": f"{len(content)}", "Accept-Ranges": "bytes"},
+    )
+    requests_mock.get(
+        API_URL + "/dl/jjr1.tiff",
+        response_list=[
+            {"exc": requests.exceptions.ChunkedEncodingError("Response ended prematurely")},
+            {"status_code": 206, "content": content},
+        ],
+    )
+
+    job = BatchJob("jj1", connection=con100)
+    target = tmp_path / "res.tiff"
+    res = job.get_results().download_file(target)
+
+    assert res == target
+    assert target.read_bytes() == content
+
+
+def test_download_all_at_once_retries_on_connection_error(con100, requests_mock, tmp_path):
+    """A non-ranged download that hits a connection error retries and succeeds."""
+    requests_mock.get(
+        API_URL + "/jobs/jj1/results",
+        json={"assets": {"1.tiff": {"href": API_URL + "/dl/jjr1.tiff", "type": "image/tiff; application=geotiff"}}},
+    )
+    # No Accept-Ranges -> the all-at-once path is used.
+    requests_mock.head(API_URL + "/dl/jjr1.tiff", headers={"Content-Length": f"{len(TIFF_CONTENT)}"})
+    requests_mock.get(
+        API_URL + "/dl/jjr1.tiff",
+        response_list=[
+            {"exc": requests.exceptions.ConnectionError("Connection reset")},
+            {"status_code": 200, "content": TIFF_CONTENT},
+        ],
+    )
+
+    job = BatchJob("jj1", connection=con100)
+    target = tmp_path / "res.tiff"
+    res = job.get_results().download_file(target)
+
+    assert res == target
+    assert target.read_bytes() == TIFF_CONTENT
+
+
+def test_get_results_download_files_honors_range_size(con100, requests_mock, tmp_path):
+    """``download_files`` passes ``range_size`` through to ranged downloads."""
+    content = b"0123456789" * 100  # 1000 bytes
+
+    def handle_content(request, context):
+        match = re.search(r"bytes=(\d+)-(\d+)", request.headers["Range"])
+        from_bytes = int(match.group(1))
+        to_bytes = int(match.group(2))
+        return content[from_bytes : to_bytes + 1]
+
+    requests_mock.get(
+        API_URL + "/jobs/jj1/results",
+        json={"assets": {"1.tiff": {"href": API_URL + "/dl/jjr1.tiff", "type": "image/tiff; application=geotiff"}}},
+    )
+    requests_mock.head(
+        API_URL + "/dl/jjr1.tiff",
+        headers={"Content-Length": f"{len(content)}", "Accept-Ranges": "bytes"},
+    )
+    requests_mock.get(API_URL + "/dl/jjr1.tiff", content=handle_content)
+
+    job = BatchJob("jj1", connection=con100)
+    target = tmp_path / "folder"
+    target.mkdir()
+    res = job.get_results().download_files(target, range_size=250, include_stac_metadata=False)
+
+    assert res == [target / "1.tiff"]
+    assert (target / "1.tiff").read_bytes() == content
+    # 1000 bytes / 250-byte ranges -> 4 ranged requests
+    range_requests = [r for r in requests_mock.request_history if r.headers.get("Range")]
+    assert len(range_requests) == 4
+
+
 def test_result_asset_download_folder(con100, requests_mock, tmp_path):
     href = API_URL + "/dl/jjr1.tiff"
     requests_mock.head(href, headers={"Content-Length": f"{len(TIFF_CONTENT)}"})

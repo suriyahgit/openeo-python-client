@@ -656,12 +656,17 @@ class JobResults:
         target: Union[Path, str] = None,
         include_stac_metadata: bool = True,
         chunk_size=DEFAULT_DOWNLOAD_CHUNK_SIZE,
+        range_size: int = DEFAULT_DOWNLOAD_RANGE_SIZE,
     ) -> List[Path]:
         """
         Download all assets to given folder.
 
         :param target: path to folder to download to (must be a folder if it already exists)
         :param include_stac_metadata: whether to download the job result metadata as a STAC (JSON) file.
+        :param chunk_size: chunk size for streaming responses.
+        :param range_size: byte range size for ranged downloads. Lower it (e.g.
+            ``8 * 1024 * 1024``) on networks with flaky proxies that truncate
+            large single-range transfers.
         :return: list of paths to the downloaded assets.
         """
         target = Path(target or Path.cwd())
@@ -669,7 +674,7 @@ class JobResults:
             raise OpenEoClientException(f"Target argument {target} exists but isn't a folder.")
         ensure_dir(target)
 
-        downloaded = [a.download(target, chunk_size=chunk_size) for a in self.get_assets()]
+        downloaded = [a.download(target, chunk_size=chunk_size, range_size=range_size) for a in self.get_assets()]
 
         if include_stac_metadata:
             # TODO #184: convention for metadata file name?
