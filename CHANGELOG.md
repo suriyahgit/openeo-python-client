@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add a `py.typed` to indicate to type checkers that the package contains type annotations.
 - Support document based "derived_from" links in `openeo.testing.results` ([#928](https://github.com/Open-EO/openeo-python-client/issues/928))
 - Add `JobResults.download_as_collection()` (experimental) to download job results as a self-contained STAC collection with rewritten hrefs, including a template system to fine-tune file names and paths ([#931](https://github.com/Open-EO/openeo-python-client/issues/931))
+- Add `LocalConnection.with_dedl_processes()` to run local process graphs with `openeo-processes-dedl-slim` and `openeo-processes-dedl-cube-load`, including Dataset-backed RasterCube materialization through `.compute()`.
 
 ### Changed
 

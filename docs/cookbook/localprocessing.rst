@@ -23,6 +23,53 @@ Installation
 
    pip install openeo[localprocessing]
 
+DEDL Dataset-backed RasterCubes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The default local processing setup still targets ``openeo-processes-dask`` for
+backwards compatibility. For DEDL workflows, ``LocalConnection`` can also be
+constructed with the process implementations from
+``openeo-processes-dedl-slim`` and the STAC loader from
+``openeo-processes-dedl-cube-load``:
+
+.. code-block:: python
+
+    from openeo.local import LocalConnection
+
+    local_conn = LocalConnection.with_dedl_processes("./")
+    cube = local_conn.load_stac(
+        url="https://stac.example.test/collections/my-healpix-cube",
+        spatial_extent={"west": 0, "south": 0, "east": 1, "north": 1},
+        temporal_extent=["2023-07-21T10:30:00Z", "2023-07-21T11:30:00Z"],
+        bands=["ir_10.8"],
+    )
+
+    result = cube.reduce_dimension(
+        dimension="t",
+        reducer=lambda data: data.mean(),
+    ).execute()
+
+    materialized = result.compute()
+
+In this mode, the loaded RasterCube remains an ``xarray.Dataset``. Bands are
+stored as named data variables in that Dataset, not as a physical xarray
+dimension. The openEO metadata still exposes a logical band dimension named
+``"bands"`` so graph-level processes such as ``filter_bands`` or
+``reduce_dimension(dimension="bands")`` can refer to bands in the standard
+openEO way.
+
+For HEALPix STAC data, spatial dimensions are derived from ``cube:dimensions``.
+HEALPix cell-id aliases such as ``cell_ids`` and ``cells`` are normalized to
+``healpix_index`` in client metadata, matching the DEDL runtime Dataset
+dimension. This allows graphs that refer to ``dimension="healpix_index"`` to be
+built and executed locally even when the STAC collection advertises the cell
+dimension under one of these aliases.
+
+``LocalConnection.execute()`` uses the process registry attached to the
+connection instance. This allows DEDL and Dask local processing registries to be
+kept separate. Callback results are cached per callback input so reducer
+callbacks are evaluated independently for every Dataset data variable.
+
 Usage
 -----
 
