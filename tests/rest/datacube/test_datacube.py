@@ -349,6 +349,46 @@ class TestDataCube:
             },
         }
 
+    @pytest.mark.parametrize(
+        "dimension_name",
+        ["healpix_index", "t"],
+    )
+    def test_load_stac_healpix_dimension_reduce(self, dummy_backend, tmp_path, dimension_name):
+        """`reduce_dimension` on a dimension declared in the STAC `cube:dimensions`
+        (e.g. the `healpix_index` spatial dimension of a HEALPix datacube) should be
+        accepted by the client, even though the STAC collection itself does not
+        declare `cube:dimensions` (dimension info is auto-detected from the items)."""
+        items_path = tmp_path / "items.json"
+        items_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        StacDummyBuilder.item(
+                            cube_dimensions={
+                                "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                                "healpix_index": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+                            }
+                        )
+                    ],
+                }
+            )
+        )
+        stac_path = tmp_path / "stac.json"
+        stac_path.write_text(
+            json.dumps(
+                StacDummyBuilder.collection(
+                    links=[{"rel": "items", "type": "application/geo+json", "href": str(items_path)}]
+                )
+            )
+        )
+        cube = dummy_backend.connection.load_stac(str(stac_path))
+        assert "healpix_index" in cube.metadata.dimension_names()
+        assert "t" in cube.metadata.dimension_names()
+        cube = cube.reduce_dimension(dimension=dimension_name, reducer="mean")
+        cube.execute()
+        assert dummy_backend.get_sync_pg()["reducedimension1"]["arguments"]["dimension"] == dimension_name
+
 
 def test_filter_temporal_basic_positional_args(s2cube):
     im = s2cube.filter_temporal("2016-01-01", "2016-03-10")

@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Clarify UDF documentation on required function type annotations. ([#757](https://github.com/Open-EO/openeo-python-client/issues/757))
 - `OidcProviderInfo` no longer drops requested OIDC scopes (including the "offline_access" scope used for refresh tokens) that are not listed in the provider's `scopes_supported` discovery field, which made it impossible to authenticate against such providers. ([#930](https://github.com/Open-EO/openeo-python-client/issues/930))
+- `metadata_from_stac()` now detects the real spatial dimensions from the STAC object's `cube:dimensions` metadata (consulting a Collection's items when it does not declare `cube:dimensions` itself), instead of always falling back to generic `x`/`y` dimensions. This lets the client accept dimension-referencing processes (e.g. `reduce_dimension(dimension="healpix_index")`) for cubes such as HEALPix datacubes whose actual spatial dimension is only declared on their STAC items.
 
 ## [0.51.0] - 2026-07-16
 
