@@ -28,6 +28,35 @@ from openeo.rest.datacube import DataCube
 
 _log = logging.getLogger(__name__)
 
+_HEALPIX_SPATIAL_DIMENSION_NAMES = {"healpix_index", "cell_ids", "cells"}
+
+
+def _is_healpix_spatial_dimension(data: Union[xr.Dataset, xr.DataArray], dim: str) -> bool:
+    lowered = str(dim).casefold()
+    if "healpix" in lowered or lowered in _HEALPIX_SPATIAL_DIMENSION_NAMES:
+        return True
+
+    coord = data.coords.get(dim)
+    return coord is not None and str(coord.attrs.get("dggs:grid_name", "")).casefold() == "healpix"
+
+
+def _spatial_dimensions_from_xarray_cube(data: Union[xr.Dataset, xr.DataArray]) -> List[SpatialDimension]:
+    spatial_dimension_names = []
+    openeo_accessor = getattr(data, "openeo", None)
+    if openeo_accessor is not None:
+        spatial_dimension_names.extend(openeo_accessor.spatial_dims or ())
+
+    if not spatial_dimension_names:
+        spatial_dimension_names.extend(
+            dim for dim in data.dims if _is_healpix_spatial_dimension(data=data, dim=dim)
+        )
+
+    if not spatial_dimension_names and openeo_accessor is not None:
+        spatial_dimension_names.extend([openeo_accessor.x_dim, openeo_accessor.y_dim])
+
+    spatial_dimension_names = list(dict.fromkeys(name for name in spatial_dimension_names if name is not None))
+    return [SpatialDimension(name=name, extent=[]) for name in spatial_dimension_names]
+
 
 class LocalConnection():
     """
@@ -246,9 +275,8 @@ class LocalConnection():
             bands = xarray_cube.data_vars
         metadata = CollectionMetadata(
             attrs,
-            dimensions=[
-                SpatialDimension(name=xarray_cube.openeo.x_dim, extent=[]),
-                SpatialDimension(name=xarray_cube.openeo.y_dim, extent=[]),
+            dimensions=_spatial_dimensions_from_xarray_cube(xarray_cube)
+            + [
                 TemporalDimension(name=xarray_cube.openeo.temporal_dims[0], extent=[]),
                 BandDimension(
                     name=band_dimension,

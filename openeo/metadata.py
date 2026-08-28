@@ -26,6 +26,9 @@ from openeo.utils.normalize import normalize_resample_resolution, unique
 
 _log = logging.getLogger(__name__)
 
+_HEALPIX_DIMENSION_NAME = "healpix_index"
+_HEALPIX_CELL_DIMENSION_ALIASES = {"cell_ids", "cells"}
+
 
 class MetadataException(Exception):
     pass
@@ -822,16 +825,31 @@ class _StacMetadataParser:
         :return: list of spatial dimensions (empty if none detected)
         """
         cube_dimensions = self.get_cube_dimensions(stac_obj)
-        return [
-            SpatialDimension(
-                name=name,
-                extent=info.get("extent"),
-                crs=info.get("reference_system", SpatialDimension.DEFAULT_CRS),
-                step=info.get("step"),
+        spatial_dimensions = []
+        seen = set()
+        for name, info in cube_dimensions.items():
+            if info.get("type") != "spatial":
+                continue
+            name = self._normalize_spatial_dimension_name(name=name)
+            if name in seen:
+                continue
+            seen.add(name)
+            spatial_dimensions.append(
+                SpatialDimension(
+                    name=name,
+                    extent=info.get("extent"),
+                    crs=info.get("reference_system", SpatialDimension.DEFAULT_CRS),
+                    step=info.get("step"),
+                )
             )
-            for name, info in cube_dimensions.items()
-            if info.get("type") == "spatial"
-        ]
+        return spatial_dimensions
+
+    @staticmethod
+    def _normalize_spatial_dimension_name(name: str) -> str:
+        """Normalize common HEALPix cell-id aliases to the client/runtime dimension name."""
+        if str(name).casefold() in _HEALPIX_CELL_DIMENSION_ALIASES:
+            return _HEALPIX_DIMENSION_NAME
+        return name
 
     def get_cube_dimensions(self, stac_obj: pystac.STACObject) -> Dict[str, dict]:
         """

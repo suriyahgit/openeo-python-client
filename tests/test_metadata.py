@@ -1272,6 +1272,16 @@ def test_metadata_from_stac_temporal_dimension(tmp_path, stac_dict, expected):
             ),
             ["healpix_index"],
         ),
+        # Item declaring the DEDL HEALPix cell-id alias used in STAC metadata
+        (
+            StacDummyBuilder.item(
+                cube_dimensions={
+                    "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                    "cell_ids": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+                }
+            ),
+            ["healpix_index"],
+        ),
         # Item declaring generic x/y spatial dimensions
         (
             StacDummyBuilder.item(
@@ -1323,6 +1333,29 @@ def test_metadata_from_stac_collection_consults_items_for_spatial_dimensions(tmp
 
     metadata = metadata_from_stac(str(collection_path))
     assert [d.name for d in metadata.spatial_dimensions] == ["healpix_index"]
+
+
+def test_metadata_from_stac_collection_normalizes_healpix_cell_ids_from_items(tmp_path):
+    """DEDL HEALPix items can advertise their spatial dimension as `cell_ids`;
+    client metadata should match the runtime dimension name `healpix_index`."""
+    item = StacDummyBuilder.item(
+        cube_dimensions={
+            "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+            "cell_ids": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+        }
+    )
+    items_path = tmp_path / "items.json"
+    items_path.write_text(json.dumps({"type": "FeatureCollection", "features": [item]}))
+
+    collection = StacDummyBuilder.collection(
+        links=[{"rel": "items", "type": "application/geo+json", "href": str(items_path)}]
+    )
+    collection_path = tmp_path / "collection.json"
+    collection_path.write_text(json.dumps(collection))
+
+    metadata = metadata_from_stac(str(collection_path))
+    assert [d.name for d in metadata.spatial_dimensions] == ["healpix_index"]
+    assert "cell_ids" not in metadata.dimension_names()
 
 
 @pytest.mark.parametrize(

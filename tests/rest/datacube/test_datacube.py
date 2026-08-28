@@ -389,6 +389,40 @@ class TestDataCube:
         cube.execute()
         assert dummy_backend.get_sync_pg()["reducedimension1"]["arguments"]["dimension"] == dimension_name
 
+    def test_load_stac_healpix_cell_ids_dimension_reduce(self, dummy_backend, tmp_path):
+        """DEDL HEALPix items can expose their spatial dimension as `cell_ids` in
+        STAC metadata while the runtime cube uses `healpix_index`."""
+        items_path = tmp_path / "items.json"
+        items_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        StacDummyBuilder.item(
+                            cube_dimensions={
+                                "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                                "cell_ids": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+                            }
+                        )
+                    ],
+                }
+            )
+        )
+        stac_path = tmp_path / "stac.json"
+        stac_path.write_text(
+            json.dumps(
+                StacDummyBuilder.collection(
+                    links=[{"rel": "items", "type": "application/geo+json", "href": str(items_path)}]
+                )
+            )
+        )
+        cube = dummy_backend.connection.load_stac(str(stac_path))
+        assert "healpix_index" in cube.metadata.dimension_names()
+        assert "cell_ids" not in cube.metadata.dimension_names()
+        cube = cube.reduce_dimension(dimension="healpix_index", reducer="mean")
+        cube.execute()
+        assert dummy_backend.get_sync_pg()["reducedimension1"]["arguments"]["dimension"] == "healpix_index"
+
 
 def test_filter_temporal_basic_positional_args(s2cube):
     im = s2cube.filter_temporal("2016-01-01", "2016-03-10")

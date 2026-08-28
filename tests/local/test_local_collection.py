@@ -40,6 +40,29 @@ def test_load_stac_registry_honors_monkeypatch(monkeypatch):
 
 
 @pytest.mark.skipif(not LocalConnection, reason="environment does not support localprocessing")
+def test_load_stac_dataset_metadata_keeps_healpix_spatial_dimension(monkeypatch):
+    from openeo_processes_dask.process_implementations.cubes import load
+
+    def patched_load_stac(*args, **kwargs):
+        assert args == ()
+        assert kwargs == {"url": "https://example.test/catalog"}
+        return xr.Dataset(
+            {"ch1": (["t", "healpix_index"], np.ones((1, 2)))},
+            coords={
+                "t": np.array(["2024-01-01"], dtype="datetime64[ns]"),
+                "healpix_index": [1, 2],
+            },
+        )
+
+    monkeypatch.setattr(load, "load_stac", patched_load_stac)
+
+    cube = LocalConnection([]).load_stac("https://example.test/catalog")
+
+    assert [d.name for d in cube.metadata.spatial_dimensions] == ["healpix_index"]
+    assert cube.metadata.dimension_names() == ["healpix_index", "t", "bands"]
+
+
+@pytest.mark.skipif(not LocalConnection, reason="environment does not support localprocessing")
 def test_load_local_collection_returns_dataset(tmp_path_factory):
     """load_local_collection returns Dataset for NetCDF files."""
     from openeo.local.processing import load_local_collection
