@@ -1304,6 +1304,19 @@ def test_metadata_from_stac_temporal_dimension(tmp_path, stac_dict, expected):
             ),
             ["healpix_index"],
         ),
+        # Consolidated DEDL collection declaring grid-qualified HEALPix spatial
+        # dimensions (`type: "healpix"`, one axis per grid) -> single
+        # `healpix_index` spatial dimension in the runtime cube
+        (
+            StacDummyBuilder.collection(
+                cube_dimensions={
+                    "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                    "1km/healpix_index": {"type": "healpix", "extent": [0, 805306367]},
+                    "3km/healpix_index": {"type": "healpix", "extent": [0, 50331647]},
+                }
+            ),
+            ["healpix_index"],
+        ),
     ],
 )
 def test_metadata_from_stac_spatial_dimensions(tmp_path, stac_dict, expected_spatial):
@@ -1311,6 +1324,28 @@ def test_metadata_from_stac_spatial_dimensions(tmp_path, stac_dict, expected_spa
     path.write_text(json.dumps(stac_dict))
     metadata = metadata_from_stac(str(path))
     assert [d.name for d in metadata.spatial_dimensions] == expected_spatial
+
+
+def test_metadata_from_stac_consolidated_healpix_dimensions(tmp_path):
+    """The consolidated DEDL datacubes advertise `type: "healpix"` spatial dims
+    with grid prefixes (`3km/healpix_index`) and a `time` temporal dim, while the
+    DEDL loader returns a cube with `healpix_index`/`t`. The parsed metadata
+    should align with the runtime cube so graphs using those names validate."""
+    path = tmp_path / "stac.json"
+    path.write_text(
+        json.dumps(
+            StacDummyBuilder.collection(
+                cube_dimensions={
+                    "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                    "1km/healpix_index": {"type": "healpix", "extent": [0, 805306367]},
+                    "3km/healpix_index": {"type": "healpix", "extent": [0, 50331647]},
+                }
+            )
+        )
+    )
+    metadata = metadata_from_stac(str(path))
+    assert metadata.dimension_names() == ["healpix_index", "bands", "t"]
+    assert metadata.temporal_dimension.name == "t"
 
 
 def test_metadata_from_stac_collection_consults_items_for_spatial_dimensions(tmp_path):

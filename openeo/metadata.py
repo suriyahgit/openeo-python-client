@@ -719,6 +719,13 @@ def metadata_from_stac(url: str) -> CubeMetadata:
     # TODO: is it possible to derive the actual name of temporal dimension that the backend will use?
     temporal_dimension = parser.get_temporal_dimension(stac_object)
     if temporal_dimension:
+        # The DEDL load_stac runtime normalizes the temporal axis of HEALPix
+        # datacubes to `t` regardless of the STAC-declared name (consolidated
+        # datacubes call it `time`). Align the metadata so graphs built with
+        # `dimension="t"` validate.
+        is_healpix = any(d.name == _HEALPIX_DIMENSION_NAME for d in spatial_dimensions)
+        if is_healpix and temporal_dimension.name != "t":
+            temporal_dimension = TemporalDimension(name="t", extent=temporal_dimension.extent)
         dimensions.append(temporal_dimension)
 
     return CubeMetadata(dimensions=dimensions)
@@ -828,7 +835,9 @@ class _StacMetadataParser:
         spatial_dimensions = []
         seen = set()
         for name, info in cube_dimensions.items():
-            if info.get("type") != "spatial":
+            # Consolidated DEDL datacubes declare their (grid-qualified) spatial
+            # axes with `type: "healpix"` instead of `type: "spatial"`.
+            if info.get("type") not in ("spatial", "healpix"):
                 continue
             name = self._normalize_spatial_dimension_name(name=name)
             if name in seen:
@@ -846,10 +855,17 @@ class _StacMetadataParser:
 
     @staticmethod
     def _normalize_spatial_dimension_name(name: str) -> str:
-        """Normalize common HEALPix cell-id aliases to the client/runtime dimension name."""
-        if str(name).casefold() in _HEALPIX_CELL_DIMENSION_ALIASES:
+        """Normalize HEALPix spatial dimension names to the client/runtime name.
+
+        Handles plain cell-id aliases (``cell_ids``, ``cells``) as well as the
+        grid-qualified consolidated datacube layout (``3km/healpix_index``,
+        ``1km_ir/healpix_index``): those cubes expose a single ``healpix_index``
+        spatial axis in the runtime cube regardless of the grid prefix.
+        """
+        base = str(name).rsplit("/", 1)[-1]
+        if base.casefold() in _HEALPIX_CELL_DIMENSION_ALIASES | {_HEALPIX_DIMENSION_NAME}:
             return _HEALPIX_DIMENSION_NAME
-        return name
+        return str(name)
 
     def get_cube_dimensions(self, stac_obj: pystac.STACObject) -> Dict[str, dict]:
         """

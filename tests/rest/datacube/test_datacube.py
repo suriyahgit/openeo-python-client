@@ -423,6 +423,32 @@ class TestDataCube:
         cube.execute()
         assert dummy_backend.get_sync_pg()["reducedimension1"]["arguments"]["dimension"] == "healpix_index"
 
+    def test_load_stac_consolidated_healpix_grid_dimension_reduce(self, dummy_backend, tmp_path):
+        """Consolidated DEDL collections declare grid-qualified spatial dims
+        (`3km/healpix_index`, `type: "healpix"`) and a `time` temporal dim, while
+        the DEDL loader returns a cube with `healpix_index`/`t`. `reduce_dimension`
+        on those runtime names should be accepted."""
+        stac_path = tmp_path / "stac.json"
+        stac_path.write_text(
+            json.dumps(
+                StacDummyBuilder.collection(
+                    cube_dimensions={
+                        "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                        "1km/healpix_index": {"type": "healpix", "extent": [0, 805306367]},
+                        "3km/healpix_index": {"type": "healpix", "extent": [0, 50331647]},
+                    }
+                )
+            )
+        )
+        cube = dummy_backend.connection.load_stac(str(stac_path))
+        assert "healpix_index" in cube.metadata.dimension_names()
+        assert "t" in cube.metadata.dimension_names()
+        assert "time" not in cube.metadata.dimension_names()
+        assert "3km/healpix_index" not in cube.metadata.dimension_names()
+        cube = cube.reduce_dimension(dimension="t", reducer="mean")
+        cube.execute()
+        assert dummy_backend.get_sync_pg()["reducedimension1"]["arguments"]["dimension"] == "t"
+
 
 def test_filter_temporal_basic_positional_args(s2cube):
     im = s2cube.filter_temporal("2016-01-01", "2016-03-10")
