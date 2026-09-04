@@ -1202,10 +1202,6 @@ def test_metadata_from_stac_collection_bands_from_item_assets(
     assert caplog.messages == expected_warnings
 
 
-@pytest.mark.skipif(
-    not _PYSTAC_1_9_EXTENSION_INTERFACE,
-    reason="No backport of implementation/test below PySTAC 1.9 extension interface",
-)
 @pytest.mark.parametrize(
     ["stac_dict", "expected"],
     [

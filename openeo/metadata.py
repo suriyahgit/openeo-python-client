@@ -819,6 +819,13 @@ class _StacMetadataParser:
             if len(temporal_dims) == 1:
                 name, extent = temporal_dims[0]
                 return TemporalDimension(name=name, extent=extent)
+            if not cube_dimensions and isinstance(stac_obj, pystac.Collection) and stac_obj.extent.temporal:
+                # No explicit "cube:dimensions": build fallback from "extent.temporal",
+                # with dimension name "t" (openEO API recommendation).
+                # Mirrors the equivalent fallback in the PySTAC 1.9+ extension interface path above,
+                # which is not reachable on Python 3.8 (old PySTAC).
+                extent = [Rfc3339(propagate_none=True).normalize(d) for d in stac_obj.extent.temporal.intervals[0]]
+                return TemporalDimension(name="t", extent=extent)
 
     def get_spatial_dimensions(self, stac_obj: pystac.STACObject) -> List[SpatialDimension]:
         """
