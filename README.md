@@ -15,6 +15,34 @@ Allows you to interact with openEO backends from your own (local) Python environ
 [openEO Python Client Library docs](https://open-eo.github.io/openeo-python-client/)
 
 
+## Eurac Research DEDL additions
+
+This branch (`dedl-main`) is maintained by Eurac Research for DEDL workflows
+(local processing and STAC-based HEALPix datacubes). On top of the upstream
+client, it adds:
+
+- **HEALPix-aware STAC metadata** (`metadata_from_stac()`): spatial dimensions
+  are detected from the STAC object's `cube:dimensions`, consulting a
+  Collection's items when it does not declare them itself, instead of always
+  falling back to generic `x`/`y`. HEALPix cell-id aliases (`cell_ids`,
+  `cells`) and the grid-qualified names of consolidated DEDL datacubes (e.g.
+  `3km/healpix_index` with `type: "healpix"`) are normalized to
+  `healpix_index`, and for such HEALPix datacubes a temporal dimension named
+  `t` is exposed. This lets the client build graphs that reference these
+  runtime dimension names (e.g. `reduce_dimension(dimension="healpix_index")`)
+  against such collections, consistently across supported Python versions.
+- **DEDL local processing** (`openeo.local`): `LocalConnection.with_dedl_processes()`
+  runs openEO process graphs locally on top of the `openeo-processes-dedl-slim`
+  and `openeo-processes-dedl-cube-load` packages. Loaded RasterCubes are kept as
+  `xarray.Dataset` objects (bands as named data variables) while the openEO
+  metadata still exposes a logical `bands` dimension, non-XY spatial dimensions
+  such as `healpix_index` are preserved, and reducer callbacks are evaluated
+  independently per data variable.
+
+See the [local processing cookbook](docs/cookbook/localprocessing.rst) for a
+usage example.
+
+
 ## Usage example
 
 A simple example, to give a feel of using this library:
