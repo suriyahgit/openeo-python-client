@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+
+## [0.52.0] - 2026-09-08
+
+### Added
+
 - Added `AGENTS.md` with guidance for AI coding agents contributing to this project, including a request to disclose AI assistance in PRs ([#923](https://github.com/Open-EO/openeo-python-client/issues/923))
 - Add a `py.typed` to indicate to type checkers that the package contains type annotations.
 - Support document based "derived_from" links in `openeo.testing.results` ([#928](https://github.com/Open-EO/openeo-python-client/issues/928))
@@ -20,8 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lookup collection queryables only when property filtering is actually used in `load_collection` ([#926](https://github.com/Open-EO/openeo-python-client/issues/926))
 - The experimental local processing backend (`openeo.local`) now keeps the RasterCube as an `xr.Dataset` instead of converting it to a single `xr.DataArray` (via `to_array(dim="bands")`), aligning with the `xr.Dataset`-based RasterCube contract used by e.g. `openeo-processes-dedl-slim` and `openeo-processes-dedl-cube-load`. Band dimensions are derived from the cube's band dimension (DataArray) or its data variables (Dataset), and non-XY spatial dimensions such as `healpix_index` are preserved in local metadata.
 
-### Removed
-
 ### Fixed
 
 - Clarify UDF documentation on required function type annotations. ([#757](https://github.com/Open-EO/openeo-python-client/issues/757))
@@ -29,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `metadata_from_stac()` now detects the real spatial dimensions from the STAC object's `cube:dimensions` metadata (consulting a Collection's items when it does not declare `cube:dimensions` itself), instead of always falling back to generic `x`/`y` dimensions. This lets the client accept dimension-referencing processes (e.g. `reduce_dimension(dimension="healpix_index")`) for cubes such as HEALPix datacubes whose actual spatial dimension is only declared on their STAC items. HEALPix cell-id aliases such as `cell_ids` and `cells` are normalized to `healpix_index` to match the DEDL runtime cube.
 - `metadata_from_stac()` now also handles the consolidated DEDL HEALPix datacubes: grid-qualified spatial dimensions declared with `type: "healpix"` (e.g. `3km/healpix_index`) are recognized and normalized to a single `healpix_index` spatial dimension, and the declared `time` temporal dimension is mapped to `t`, matching the dimension names of the DEDL runtime cube.
 - `metadata_from_stac()` now also falls back to a Collection's `extent.temporal` (with dimension name `t`) for the temporal dimension when running with an older PySTAC (pre-1.9, e.g. on Python 3.8), making STAC temporal dimension handling consistent across supported Python/PySTAC versions.
+
 
 ## [0.51.0] - 2026-07-16
 
