@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `metadata_from_stac()` now detects the real spatial dimensions from the STAC object's `cube:dimensions` (consulting a Collection's items when it does not declare them itself), instead of always falling back to generic `x`/`y`. HEALPix cell-id aliases (`cell_ids`, `cells`) and grid-qualified axes (e.g. `3km/healpix_index`) are normalised to `healpix_index`, and a declared `time` temporal axis is mapped to `t`, matching the DEDL runtime cube - so dimension-referencing processes (e.g. `reduce_dimension(dimension="t")`, `rename_dimension("healpix_index")`) pass client-side validation.
 ### Removed
 
 ### Fixed

@@ -21,10 +21,13 @@ import pystac.extensions.item_assets
 
 from openeo.api.process import Parameter
 from openeo.internal.jupyter import render_component
-from openeo.util import Rfc3339, deep_get
+from openeo.util import Rfc3339, deep_get, load_json_resource
 from openeo.utils.normalize import normalize_resample_resolution, unique
 
 _log = logging.getLogger(__name__)
+
+_HEALPIX_DIMENSION_NAME = "healpix_index"
+_HEALPIX_CELL_DIMENSION_ALIASES = {"cell_ids", "cells"}
 
 
 class MetadataException(Exception):
@@ -689,26 +692,43 @@ def metadata_from_stac(url: str) -> CubeMetadata:
     :return: A :py:class:`CubeMetadata` containing the DataCube band metadata from the url.
     """
     stac_object = pystac.read_file(href=url)
-    bands = _StacMetadataParser().bands_from_stac_object(stac_object)
+    parser = _StacMetadataParser()
+    bands = parser.bands_from_stac_object(stac_object)
 
-    # At least assume there are spatial dimensions
-    # TODO #743: are there conditions in which we even should not assume the presence of spatial dimensions?
-    dimensions = [
-        SpatialDimension(name="x", extent=[None, None]),
-        SpatialDimension(name="y", extent=[None, None]),
-    ]
+    # Try to detect the real (spatial) dimensions from the STAC object's
+    # `cube:dimensions` metadata. For a Collection that does not declare
+    # `cube:dimensions` itself, consult the Collection's items, as the
+    # dimension info might be declared there (e.g. for HEALPix datacubes
+    # exposing a `healpix_index` spatial dimension). Falls back to a
+    # generic x/y assumption otherwise.
+    spatial_dimensions = parser.get_spatial_dimensions(stac_object)
+    if not spatial_dimensions:
+        # At least assume there are spatial dimensions
+        # TODO #743: are there conditions in which we even should not assume the presence of spatial dimensions?
+        spatial_dimensions = [
+            SpatialDimension(name="x", extent=[None, None]),
+            SpatialDimension(name="y", extent=[None, None]),
+        ]
+
+    dimensions = list(spatial_dimensions)
 
     # TODO #743: conditionally include band dimension when there was actual indication of band metadata?
     band_dimension = BandDimension(name="bands", bands=bands)
     dimensions.append(band_dimension)
 
     # TODO: is it possible to derive the actual name of temporal dimension that the backend will use?
-    temporal_dimension = _StacMetadataParser().get_temporal_dimension(stac_object)
+    temporal_dimension = parser.get_temporal_dimension(stac_object)
     if temporal_dimension:
+        # The DEDL load_stac runtime normalizes the temporal axis of HEALPix
+        # datacubes to `t` regardless of the STAC-declared name (consolidated
+        # datacubes call it `time`). Align the metadata so graphs built with
+        # `dimension="t"` validate.
+        is_healpix = any(d.name == _HEALPIX_DIMENSION_NAME for d in spatial_dimensions)
+        if is_healpix and temporal_dimension.name != "t":
+            temporal_dimension = TemporalDimension(name="t", extent=temporal_dimension.extent)
         dimensions.append(temporal_dimension)
 
-    metadata = CubeMetadata(dimensions=dimensions)
-    return metadata
+    return CubeMetadata(dimensions=dimensions)
 
 # Sniff for PySTAC extension API since version 1.9.0 (which is not available below Python 3.9)
 # TODO: remove this once support for Python 3.7 and 3.8 is dropped
@@ -799,6 +819,108 @@ class _StacMetadataParser:
             if len(temporal_dims) == 1:
                 name, extent = temporal_dims[0]
                 return TemporalDimension(name=name, extent=extent)
+            if not cube_dimensions and isinstance(stac_obj, pystac.Collection) and stac_obj.extent.temporal:
+                # No explicit "cube:dimensions": build fallback from "extent.temporal",
+                # with dimension name "t" (openEO API recommendation).
+                # Mirrors the equivalent fallback in the PySTAC 1.9+ extension interface path above,
+                # which is not reachable on Python 3.8 (old PySTAC).
+                extent = [Rfc3339(propagate_none=True).normalize(d) for d in stac_obj.extent.temporal.intervals[0]]
+                return TemporalDimension(name="t", extent=extent)
+
+    def get_spatial_dimensions(self, stac_obj: pystac.STACObject) -> List[SpatialDimension]:
+        """
+        Extract the spatial dimensions from the `cube:dimensions` metadata
+        of a STAC object.
+
+        For a Collection or Catalog that does not declare `cube:dimensions`
+        itself, the items are consulted as fallback (e.g. HEALPix datacubes
+        that declare a ``healpix_index`` spatial dimension on their items).
+
+        :return: list of spatial dimensions (empty if none detected)
+        """
+        cube_dimensions = self.get_cube_dimensions(stac_obj)
+        spatial_dimensions = []
+        seen = set()
+        for name, info in cube_dimensions.items():
+            # Consolidated DEDL datacubes declare their (grid-qualified) spatial
+            # axes with `type: "healpix"` instead of `type: "spatial"`.
+            if info.get("type") not in ("spatial", "healpix"):
+                continue
+            name = self._normalize_spatial_dimension_name(name=name)
+            if name in seen:
+                continue
+            seen.add(name)
+            spatial_dimensions.append(
+                SpatialDimension(
+                    name=name,
+                    extent=info.get("extent"),
+                    crs=info.get("reference_system", SpatialDimension.DEFAULT_CRS),
+                    step=info.get("step"),
+                )
+            )
+        return spatial_dimensions
+
+    @staticmethod
+    def _normalize_spatial_dimension_name(name: str) -> str:
+        """Normalize HEALPix spatial dimension names to the client/runtime name.
+
+        Handles plain cell-id aliases (``cell_ids``, ``cells``) as well as the
+        grid-qualified consolidated datacube layout (``3km/healpix_index``,
+        ``1km_ir/healpix_index``): those cubes expose a single ``healpix_index``
+        spatial axis in the runtime cube regardless of the grid prefix.
+        """
+        base = str(name).rsplit("/", 1)[-1]
+        if base.casefold() in _HEALPIX_CELL_DIMENSION_ALIASES | {_HEALPIX_DIMENSION_NAME}:
+            return _HEALPIX_DIMENSION_NAME
+        return str(name)
+
+    def get_cube_dimensions(self, stac_obj: pystac.STACObject) -> Dict[str, dict]:
+        """
+        Extract the raw `cube:dimensions` metadata from a STAC object.
+
+        For a Collection or Catalog that does not declare `cube:dimensions`
+        itself, the items are consulted as fallback.
+
+        :return: mapping of dimension name to dimension info dict
+        """
+        if isinstance(stac_obj, pystac.Item):
+            return stac_obj.properties.get("cube:dimensions", {}) or {}
+        elif isinstance(stac_obj, (pystac.Collection, pystac.Catalog)):
+            cube_dimensions = stac_obj.extra_fields.get("cube:dimensions", {}) or {}
+            if cube_dimensions:
+                return cube_dimensions
+            return self._cube_dimensions_from_items(stac_obj)
+        else:
+            return {}
+
+    def _cube_dimensions_from_items(self, stac_obj: Union[pystac.Collection, pystac.Catalog]) -> Dict[str, dict]:
+        """
+        Extract `cube:dimensions` metadata from the items of a STAC Collection or Catalog.
+
+        First the standard item links are tried, then a STAC API style
+        ``items`` link (which returns an ItemCollection) is consulted.
+        """
+        # Try standard item links first
+        try:
+            for item in stac_obj.get_items():
+                cube_dimensions = item.properties.get("cube:dimensions", {}) or {}
+                if cube_dimensions:
+                    return cube_dimensions
+        except Exception:
+            pass
+        # Then try a STAC API style "items" link (returns an ItemCollection)
+        for link in stac_obj.links:
+            if link.rel == "items" and link.href:
+                try:
+                    data = load_json_resource(link.href)
+                    item_collection = pystac.ItemCollection.from_dict(data)
+                    for item in item_collection.items:
+                        cube_dimensions = item.properties.get("cube:dimensions", {}) or {}
+                        if cube_dimensions:
+                            return cube_dimensions
+                except Exception as e:
+                    self._warn(f"Failed to load cube:dimensions from items link {link.href!r}: {e!r}")
+        return {}
 
     def _band_from_eo_bands_metadata(self, band: Union[dict, pystac.extensions.eo.Band]) -> Band:
         """Construct band from metadata in eo v1.1 style"""
