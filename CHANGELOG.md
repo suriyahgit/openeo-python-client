@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The experimental local processing backend (`openeo.local`) now keeps the RasterCube as an `xr.Dataset` instead of converting it to a single `xr.DataArray` (via `to_array(dim="bands")`), aligning with the `xr.Dataset`-based RasterCube contract. Band dimensions are derived from the cube's band dimension (DataArray) or its data variables (Dataset), and non-XY spatial dimensions such as `healpix_index` are preserved in local metadata. Adds DEDL local process execution support (`PROCESS_REGISTRY`, `LocalConnection.load_stac`/`load_collection` on local files).
 ### Removed
 
 ### Fixed

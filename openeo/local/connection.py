@@ -1,4 +1,5 @@
 import datetime
+import inspect
 import logging
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Union
@@ -7,7 +8,6 @@ import numpy as np
 import xarray as xr
 from openeo_pg_parser_networkx.graph import OpenEOProcessGraph
 from openeo_pg_parser_networkx.pg_schema import BoundingBox, TemporalInterval
-from openeo_processes_dask.process_implementations.cubes import load_stac
 
 from openeo.internal.graph_building import PGNode, as_flat_graph
 from openeo.internal.jupyter import VisualDict, VisualList
@@ -16,7 +16,7 @@ from openeo.local.collections import (
     _get_local_collections,
     _get_netcdf_zarr_metadata,
 )
-from openeo.local.processing import PROCESS_REGISTRY
+from openeo.local.processing import get_process_registry, init_dedl_process_registry
 from openeo.metadata import (
     Band,
     BandDimension,
@@ -28,20 +28,194 @@ from openeo.rest.datacube import DataCube
 
 _log = logging.getLogger(__name__)
 
+_HEALPIX_SPATIAL_DIMENSION_NAMES = {"healpix_index", "cell_ids", "cells"}
+
+
+def _is_healpix_spatial_dimension(data: Union[xr.Dataset, xr.DataArray], dim: str) -> bool:
+    lowered = str(dim).casefold()
+    if "healpix" in lowered or lowered in _HEALPIX_SPATIAL_DIMENSION_NAMES:
+        return True
+
+    coord = data.coords.get(dim)
+    return coord is not None and str(coord.attrs.get("dggs:grid_name", "")).casefold() == "healpix"
+
+
+def _spatial_dimensions_from_xarray_cube(data: Union[xr.Dataset, xr.DataArray]) -> List[SpatialDimension]:
+    spatial_dimension_names = []
+    openeo_accessor = getattr(data, "openeo", None)
+    if openeo_accessor is not None:
+        spatial_dimension_names.extend(openeo_accessor.spatial_dims or ())
+
+    if not spatial_dimension_names:
+        spatial_dimension_names.extend(
+            dim for dim in data.dims if _is_healpix_spatial_dimension(data=data, dim=dim)
+        )
+
+    if not spatial_dimension_names and openeo_accessor is not None:
+        spatial_dimension_names.extend([openeo_accessor.x_dim, openeo_accessor.y_dim])
+
+    spatial_dimension_names = list(dict.fromkeys(name for name in spatial_dimension_names if name is not None))
+    return [SpatialDimension(name=name, extent=[]) for name in spatial_dimension_names]
+
+
+def _temporal_dimension_from_xarray_cube(data: Union[xr.Dataset, xr.DataArray]) -> str:
+    openeo_accessor = getattr(data, "openeo", None)
+    if openeo_accessor is not None and openeo_accessor.temporal_dims:
+        return openeo_accessor.temporal_dims[0]
+
+    for name in data.dims:
+        coord = data.coords.get(name)
+        if coord is not None and np.issubdtype(coord.dtype, np.datetime64):
+            return name
+
+    for name in ["t", "time", "temporal"]:
+        if name in data.dims:
+            return name
+
+    raise ValueError(f"Could not detect temporal dimension in xarray cube with dimensions: {list(data.dims)}")
+
+
+def _edge_reference_type(data: dict) -> Optional[str]:
+    reference_type = data.get("reference_type")
+    return getattr(reference_type, "value", reference_type)
+
+
+def _callback_node_ids(process_graph: OpenEOProcessGraph) -> set:
+    callback_nodes = set()
+    stack = [
+        target
+        for _, target, data in process_graph.G.edges(data=True)
+        if _edge_reference_type(data) == "callback"
+    ]
+
+    while stack:
+        node = stack.pop()
+        if node in callback_nodes:
+            continue
+        callback_nodes.add(node)
+        for _, source_node, data in process_graph.G.out_edges(node, data=True):
+            if _edge_reference_type(data) in {"result_reference", "callback"}:
+                stack.append(source_node)
+
+    return callback_nodes
+
+
+class _CallbackScopedResultsCache(dict):
+    """
+    Scope callback-node cache entries by callback parameters.
+
+    openeo-pg-parser-networkx uses one result cache for the whole graph. That is
+    fine for ordinary process nodes, but callbacks passed to xarray operations
+    can be invoked repeatedly with different arrays, for example once per
+    Dataset data variable. Including the current callback parameters in the
+    cache key prevents reusing the first variable's reducer output for the next
+    variable.
+    """
+
+    def __init__(self, callback_nodes: set):
+        super().__init__()
+        self._callback_nodes = callback_nodes
+
+    def _cache_key(self, key):
+        if key not in self._callback_nodes:
+            return key
+
+        token = self._callback_parameters_token()
+        if token is None:
+            return key
+        return key, token
+
+    @staticmethod
+    def _callback_parameters_token():
+        frame = inspect.currentframe()
+        if frame is not None:
+            frame = frame.f_back
+
+        while frame is not None:
+            if frame.f_code.co_name == "node_callable":
+                named_parameters = frame.f_locals.get("named_parameters") or {}
+                parameter_token = [
+                    (name, id(value)) for name, value in named_parameters.items()
+                ]
+
+                kwargs = frame.f_locals.get("kwargs") or {}
+                args = frame.f_locals.get("args") or ()
+                positional_parameters = kwargs.get("positional_parameters") or {}
+                for name, position in positional_parameters.items():
+                    if position < len(args):
+                        parameter_token.append((name, id(args[position])))
+
+                if parameter_token:
+                    return tuple(sorted(parameter_token))
+            frame = frame.f_back
+        return None
+
+    def __getitem__(self, key):
+        return super().__getitem__(self._cache_key(key))
+
+    def __setitem__(self, key, value):
+        super().__setitem__(self._cache_key(key), value)
+
 
 class LocalConnection():
     """
     Connection to no backend, for local processing.
     """
 
-    def __init__(self,local_collections_path: Union[str,List]):
+    def __init__(
+        self,
+        local_collections_path: Union[str, List],
+        *,
+        process_registry=None,
+        load_stac_implementation: Optional[Callable] = None,
+    ):
         """
         Constructor of LocalConnection.
 
         :param local_collections_path: String or list of strings, path to the folder(s) with
-        the local collections in netCDF, geoTIFF or ZARR.
+            the local collections in netCDF, geoTIFF or ZARR.
+        :param process_registry: Optional process registry to use for local execution.
+        :param load_stac_implementation: Optional ``load_stac`` implementation to use for
+            metadata probing in :py:meth:`load_stac`.
         """
         self.local_collections_path = local_collections_path
+        self._process_registry = process_registry
+        self._load_stac_implementation = load_stac_implementation
+
+    @classmethod
+    def with_dedl_processes(
+        cls,
+        local_collections_path: Union[str, List],
+        *,
+        load_stac_implementation: Optional[Callable] = None,
+    ) -> "LocalConnection":
+        """
+        Construct a local connection backed by DEDL slim and DEDL cube-load.
+        """
+        if load_stac_implementation is None:
+            from openeo_processes_dedl_cube_load import load_stac as load_stac_implementation
+
+        return cls(
+            local_collections_path=local_collections_path,
+            process_registry=init_dedl_process_registry(
+                load_stac_implementation=load_stac_implementation
+            ),
+            load_stac_implementation=load_stac_implementation,
+        )
+
+    def _get_process_registry(self):
+        if self._process_registry is None:
+            self._process_registry = get_process_registry()
+        return self._process_registry
+
+    def _get_load_stac_implementation(self):
+        if self._load_stac_implementation is not None:
+            return self._load_stac_implementation
+
+        process_registry = self._get_process_registry()
+        if "load_stac" not in process_registry:
+            raise ValueError("Local process registry does not provide a load_stac implementation")
+        return process_registry["load_stac"].implementation
 
     def list_collections(self) -> List[dict]:
         """
@@ -228,25 +402,31 @@ class LocalConnection():
         cube = self.datacube_from_process(process_id="load_stac", **arguments)
         # detect actual metadata from URL
         # run load_stac to get the datacube metadata
+        metadata_arguments = arguments.copy()
         if spatial_extent is not None:
-            arguments["spatial_extent"] = BoundingBox.parse_obj(spatial_extent)
+            metadata_arguments["spatial_extent"] = BoundingBox.parse_obj(spatial_extent)
         if temporal_extent is not None:
-            arguments["temporal_extent"] = TemporalInterval.parse_obj(temporal_extent)
-        xarray_cube = load_stac(**arguments)
-        attrs = xarray_cube.attrs
-        for at in attrs:
+            metadata_arguments["temporal_extent"] = TemporalInterval.parse_obj(temporal_extent)
+        xarray_cube = self._get_load_stac_implementation()(**metadata_arguments)
+        attrs = dict(xarray_cube.attrs)
+        for at in list(attrs):
             # allowed types: str, Number, ndarray, number, list, tuple
             if not isinstance(attrs[at], (int, float, str, np.ndarray, list, tuple)):
                 attrs[at] = str(attrs[at])
+        if isinstance(xarray_cube, xr.DataArray):
+            band_dimension = xarray_cube.openeo.band_dims[0]
+            bands = xarray_cube[band_dimension].values
+        else:
+            band_dimension = "bands"
+            bands = xarray_cube.data_vars
         metadata = CollectionMetadata(
             attrs,
-            dimensions=[
-                SpatialDimension(name=xarray_cube.openeo.x_dim, extent=[]),
-                SpatialDimension(name=xarray_cube.openeo.y_dim, extent=[]),
-                TemporalDimension(name=xarray_cube.openeo.temporal_dims[0], extent=[]),
+            dimensions=_spatial_dimensions_from_xarray_cube(xarray_cube)
+            + [
+                TemporalDimension(name=_temporal_dimension_from_xarray_cube(xarray_cube), extent=[]),
                 BandDimension(
-                    name=xarray_cube.openeo.band_dims[0],
-                    bands=[Band(name=x) for x in xarray_cube[xarray_cube.openeo.band_dims[0]].values],
+                    name=band_dimension,
+                    bands=[Band(name=x) for x in bands],
                 ),
             ],
         )
@@ -270,9 +450,9 @@ class LocalConnection():
         *,
         validate: Optional[bool] = None,
         auto_decode: bool = True,
-    ) -> xr.DataArray:
+    ) -> Union[xr.Dataset, xr.DataArray]:
         """
-        Execute locally the process graph and return the result as an xarray.DataArray.
+        Execute locally the process graph and return the result as an xarray Dataset or DataArray.
 
         :param process_graph: (flat) dict representing a process graph, or process graph as raw JSON string,
         :return: a datacube containing the requested data
@@ -282,4 +462,6 @@ class LocalConnection():
         if auto_decode is not True:
             raise ValueError("LocalConnection requires auto_decode=True")
         process_graph = as_flat_graph(process_graph)
-        return OpenEOProcessGraph(process_graph).to_callable(PROCESS_REGISTRY)()
+        parsed = OpenEOProcessGraph(process_graph)
+        results_cache = _CallbackScopedResultsCache(_callback_node_ids(parsed))
+        return parsed.to_callable(self._get_process_registry(), results_cache=results_cache)()
