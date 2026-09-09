@@ -1351,6 +1351,151 @@ def test_metadata_from_stac_dimension_policy_cube_dimensions_vs_default(tmp_path
         assert set(got) == set(cube_dims.keys())
 
 
+# HEALPix cube:dimensions handling (spatial axis detection & normalisation)
+@pytest.mark.parametrize(
+    ["stac_dict", "expected_spatial"],
+    [
+        # A plain item: no spatial dims to detect -> fall back to generic x/y
+        (StacDummyBuilder.item(), ["x", "y"]),
+        # Item declaring a HEALPix spatial dimension
+        (
+            StacDummyBuilder.item(
+                cube_dimensions={
+                    "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                    "healpix_index": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+                }
+            ),
+            ["healpix_index"],
+        ),
+        # Item declaring the cell-id alias used in some HEALPix STAC metadata
+        (
+            StacDummyBuilder.item(
+                cube_dimensions={
+                    "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                    "cell_ids": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+                }
+            ),
+            ["healpix_index"],
+        ),
+        # Item declaring generic x/y spatial dimensions
+        (
+            StacDummyBuilder.item(
+                cube_dimensions={
+                    "x": {"type": "spatial", "axis": "x", "extent": [0, 100]},
+                    "y": {"type": "spatial", "axis": "y", "extent": [0, 200]},
+                }
+            ),
+            ["x", "y"],
+        ),
+        # Collection without cube:dimensions -> fall back to generic x/y
+        (StacDummyBuilder.collection(), ["x", "y"]),
+        # Collection declaring a HEALPix spatial dimension itself
+        (
+            StacDummyBuilder.collection(
+                cube_dimensions={
+                    "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                    "healpix_index": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+                }
+            ),
+            ["healpix_index"],
+        ),
+        # Consolidated collection declaring grid-qualified HEALPix spatial
+        # dimensions (`type: "healpix"`, one axis per grid) -> single
+        # `healpix_index` spatial dimension in the runtime cube
+        (
+            StacDummyBuilder.collection(
+                cube_dimensions={
+                    "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                    "1km/healpix_index": {"type": "healpix", "extent": [0, 805306367]},
+                    "3km/healpix_index": {"type": "healpix", "extent": [0, 50331647]},
+                }
+            ),
+            ["healpix_index"],
+        ),
+    ],
+)
+def test_metadata_from_stac_spatial_dimensions(tmp_path, stac_dict, expected_spatial):
+    path = tmp_path / "stac.json"
+    path.write_text(json.dumps(stac_dict))
+    metadata = metadata_from_stac(str(path))
+    assert [d.name for d in metadata.spatial_dimensions] == expected_spatial
+
+
+def test_metadata_from_stac_consolidated_healpix_dimensions(tmp_path):
+    """Consolidated HEALPix collections declare `type: "healpix"` spatial dims
+    with grid prefixes (`3km/healpix_index`) and a `time` temporal dim, while the
+    data back-end exposes a cube with `healpix_index`/`t` (and band metadata in a
+    `bands` dimension). The parsed metadata should align with the runtime cube so
+    that process graphs using those names validate."""
+    path = tmp_path / "stac.json"
+    path.write_text(
+        json.dumps(
+            StacDummyBuilder.collection(
+                cube_dimensions={
+                    "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+                    "1km/healpix_index": {"type": "healpix", "extent": [0, 805306367]},
+                    "3km/healpix_index": {"type": "healpix", "extent": [0, 50331647]},
+                }
+            )
+        )
+    )
+    metadata = metadata_from_stac(str(path))
+    dim_names = set(metadata.dimension_names())
+    assert dim_names == {"healpix_index", "bands", "t"}
+    assert [d.name for d in metadata.spatial_dimensions] == ["healpix_index"]
+    assert metadata.temporal_dimension.name == "t"
+    assert "1km/healpix_index" not in dim_names
+    assert "3km/healpix_index" not in dim_names
+
+
+def test_metadata_from_stac_collection_consults_items_for_spatial_dimensions(tmp_path):
+    """A Collection without its own cube:dimensions should consult its items
+    to detect the real spatial dimension (e.g. `healpix_index`)."""
+    item = StacDummyBuilder.item(
+        cube_dimensions={
+            "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+            "healpix_index": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+        }
+    )
+    items_path = tmp_path / "items.json"
+    items_path.write_text(json.dumps({"type": "FeatureCollection", "features": [item]}))
+
+    collection = StacDummyBuilder.collection(
+        links=[{"rel": "items", "type": "application/geo+json", "href": str(items_path)}]
+    )
+    collection_path = tmp_path / "collection.json"
+    collection_path.write_text(json.dumps(collection))
+
+    metadata = metadata_from_stac(str(collection_path))
+    assert [d.name for d in metadata.spatial_dimensions] == ["healpix_index"]
+
+
+def test_metadata_from_stac_collection_normalizes_healpix_cell_ids_from_items(tmp_path):
+    """HEALPix items can advertise their spatial dimension as `cell_ids` while
+    the runtime cube exposes `healpix_index`; the item-declared dimensions should
+    be normalised accordingly."""
+    item = StacDummyBuilder.item(
+        cube_dimensions={
+            "time": {"type": "temporal", "extent": ["2024-04-04", "2024-06-06"]},
+            "cell_ids": {"axis": "x", "type": "spatial", "extent": [0, 12582911]},
+        }
+    )
+    items_path = tmp_path / "items.json"
+    items_path.write_text(json.dumps({"type": "FeatureCollection", "features": [item]}))
+
+    collection = StacDummyBuilder.collection(
+        links=[{"rel": "items", "type": "application/geo+json", "href": str(items_path)}]
+    )
+    collection_path = tmp_path / "collection.json"
+    collection_path.write_text(json.dumps(collection))
+
+    metadata = metadata_from_stac(str(collection_path))
+    dim_names = set(metadata.dimension_names())
+    assert "healpix_index" in dim_names
+    assert "cell_ids" not in dim_names
+    assert metadata.temporal_dimension.name == "t"
+
+
 @pytest.mark.parametrize(
     ["kwargs", "expected_x", "expected_y"],
     [

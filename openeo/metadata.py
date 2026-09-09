@@ -21,10 +21,25 @@ import pystac.extensions.item_assets
 
 from openeo.api.process import Parameter
 from openeo.internal.jupyter import render_component
-from openeo.util import Rfc3339, deep_get
+from openeo.util import Rfc3339, deep_get, load_json_resource
 from openeo.utils.normalize import normalize_resample_resolution, unique
 
 _log = logging.getLogger(__name__)
+
+# HEALPix grid cubes commonly expose their spatial axis as a single cell index.
+# Depending on the data provider, STAC `cube:dimensions` names it `healpix_index`
+# (possibly grid-qualified, e.g. `3km/healpix_index`) or uses a cell-id alias
+# (`cell_ids`, `cells`). When such a cube is detected, the metadata is aligned to
+# the canonical openEO spatial dimension name `healpix_index` (and the standard
+# temporal dimension name `t`), so that process graphs referencing those names
+# validate against the cube as it is exposed by the back-end.
+_HEALPIX_DIMENSION_NAME = "healpix_index"
+_HEALPIX_DIMENSION_TYPES = {"healpix"}
+_HEALPIX_DIMENSION_NAME_ALIASES = {_HEALPIX_DIMENSION_NAME, "cell_ids", "cells"}
+# Bounding the number of items inspected when a Collection does not declare its
+# own `cube:dimensions`: dimension metadata is expected to be homogeneous across
+# items, so a small sample is enough.
+_MAX_ITEMS_FOR_CUBE_DIMENSIONS_SAMPLE = 3
 
 
 class MetadataException(Exception):
@@ -685,6 +700,9 @@ def metadata_from_stac(url: str) -> CubeMetadata:
     Policy:
       - If cube:dimensions exists: treat it as source of truth (it may omit x/y/t/bands).
       - Otherwise: apply openEO-style defaults (x, y, t) and (for Collection/Item) keep bands dimension even if empty.
+      - HEALPix cubes (declared `type: "healpix"` axes or cell-id aliases such as
+        `healpix_index`/`cell_ids`/`cells`, possibly grid-qualified) are normalised
+        to a single `healpix_index` spatial axis and the standard temporal name `t`.
 
     :param url: The URL to a static STAC catalog (STAC Item, STAC Collection, or STAC Catalog) or a specific STAC API Collection
     :return: A :py:class:`CubeMetadata` containing the DataCube band metadata from the url.
@@ -817,13 +835,90 @@ class _StacMetadataParser:
 
     def _cube_dimensions_dict(self, stac_object: pystac.STACObject) -> Dict[str, dict]:
         """
-        Return raw cube:dimensions dict from a Collection/Item, or {}.
+        Return raw cube:dimensions dict from a STAC object.
+
+        For a Collection/Catalog that does not declare `cube:dimensions` itself,
+        the (first) items are consulted as fallback, as dimension info is
+        sometimes only declared per item (e.g. HEALPix datacubes).
         """
         if isinstance(stac_object, pystac.Item):
             return stac_object.properties.get("cube:dimensions", {}) or {}
-        if isinstance(stac_object, pystac.Collection):
-            return stac_object.extra_fields.get("cube:dimensions", {}) or {}
+        if isinstance(stac_object, (pystac.Collection, pystac.Catalog)):
+            cube_dimensions = stac_object.extra_fields.get("cube:dimensions", {}) or {}
+            if cube_dimensions:
+                return cube_dimensions
+            return self._cube_dimensions_from_items(stac_object)
         return {}
+
+    def _cube_dimensions_from_items(self, stac_object: Union[pystac.Collection, pystac.Catalog]) -> Dict[str, dict]:
+        """
+        Extract `cube:dimensions` metadata from the items of a STAC Collection or Catalog.
+
+        First child item links are sampled; then a STAC API style ``items`` link
+        (returning an ItemCollection) is consulted. Only a bounded sample of items
+        is inspected, as the dimension metadata is expected to be homogeneous.
+        """
+        # Try (bounded) sampling of direct child item links
+        try:
+            sampled = 0
+            for item in stac_object.get_items():
+                cube_dimensions = item.properties.get("cube:dimensions", {}) or {}
+                if cube_dimensions:
+                    return cube_dimensions
+                sampled += 1
+                if sampled >= _MAX_ITEMS_FOR_CUBE_DIMENSIONS_SAMPLE:
+                    break
+        except Exception as e:
+            self._warn(f"Failed to load cube:dimensions from items of {type(stac_object).__name__}: {e!r}")
+        # Then try a STAC API style "items" link (returns an ItemCollection)
+        for link in stac_object.links:
+            if link.rel == "items" and link.href:
+                try:
+                    data = load_json_resource(link.href)
+                    item_collection = pystac.ItemCollection.from_dict(data)
+                    for item in item_collection.items[:_MAX_ITEMS_FOR_CUBE_DIMENSIONS_SAMPLE]:
+                        cube_dimensions = item.properties.get("cube:dimensions", {}) or {}
+                        if cube_dimensions:
+                            return cube_dimensions
+                except Exception as e:
+                    self._warn(f"Failed to load cube:dimensions from items link {link.href!r}: {e!r}")
+        return {}
+
+    @staticmethod
+    def _dimension_base_name(name: str) -> str:
+        """Strip grid qualifiers from a dimension name (e.g. ``3km/healpix_index`` -> ``healpix_index``)."""
+        return str(name).rsplit("/", 1)[-1]
+
+    def _cube_dimensions_have_healpix_spatial_axis(self, stac_object: pystac.STACObject) -> bool:
+        """Whether the declared ``cube:dimensions`` describe a HEALPix spatial axis.
+
+        Detected through a declared ``type: "healpix"`` axis, or a spatial axis
+        named like a cell-id alias (``healpix_index``/``cell_ids``/``cells``,
+        possibly grid-qualified).
+        """
+        for name, dim in self._cube_dimensions_dict(stac_object).items():
+            if not isinstance(dim, dict):
+                continue
+            dim_type = str(dim.get("type") or "").casefold()
+            base = self._dimension_base_name(name).casefold()
+            if dim_type in _HEALPIX_DIMENSION_TYPES or (
+                dim_type in ("spatial", "healpix") and base in _HEALPIX_DIMENSION_NAME_ALIASES
+            ):
+                return True
+        return False
+
+    def _canonical_healpix_spatial_dimension_name(self, name: str, dim_type: str) -> str:
+        """Normalize a HEALPix spatial dimension name to the canonical ``healpix_index``.
+
+        Handles `type: "healpix"` axes as well as cell-id aliases
+        (``healpix_index``, ``cell_ids``, ``cells``), including grid-qualified
+        consolidated cube layouts (``3km/healpix_index``) where the runtime cube
+        exposes a single ``healpix_index`` axis regardless of the grid prefix.
+        """
+        base = self._dimension_base_name(name).casefold()
+        if dim_type in _HEALPIX_DIMENSION_TYPES or base in _HEALPIX_DIMENSION_NAME_ALIASES:
+            return _HEALPIX_DIMENSION_NAME
+        return name
 
     @staticmethod
     def _safe_extent_from_pystac_cube_dim(dim) -> list:
@@ -845,7 +940,16 @@ class _StacMetadataParser:
     def _parse_declared_dimensions(self, stac_object: pystac.STACObject, bands: _BandList) -> List[Dimension]:
         """
         Parse dimensions declared through cube:dimensions.
+
+        HEALPix cubes are parsed from the raw ``cube:dimensions`` dict so the
+        declared axes can be normalised to the canonical openEO spatial/temporal
+        dimension names (PySTAC's datacube extension cannot represent
+        `type: "healpix"` axes as spatial).
         """
+        if self._cube_dimensions_have_healpix_spatial_axis(stac_object):
+            return self._parse_cube_dimensions_from_raw_dict(
+                stac_object=stac_object, bands=bands, healpix_normalization=True
+            )
         if (
             _PYSTAC_1_9_EXTENSION_INTERFACE
             and getattr(stac_object, "ext", None) is not None
@@ -877,29 +981,61 @@ class _StacMetadataParser:
 
         return dimensions
 
-    def _parse_cube_dimensions_from_raw_dict(self, stac_object: pystac.STACObject, bands: _BandList) -> List[Dimension]:
+    def _parse_cube_dimensions_from_raw_dict(
+        self, stac_object: pystac.STACObject, bands: _BandList, *, healpix_normalization: bool = False
+    ) -> List[Dimension]:
         """
         Parse dimensions from raw cube:dimensions dict.
+
         Supports 'spatial', 'temporal', and ('bands' or 'spectral' as an alias).
+
+        With ``healpix_normalization`` enabled (HEALPix cubes), spatial axes are
+        collapsed to a single canonical ``healpix_index`` dimension (grid-qualified
+        names such as ``3km/healpix_index`` describe one axis per grid but the
+        runtime cube exposes a single axis), a sole temporal axis is exposed under
+        the standard openEO name ``t``, and a ``bands`` dimension is kept.
         """
         dimensions = []
         cube_dimensions = self._cube_dimensions_dict(stac_object)
+        n_temporal = sum(1 for d in cube_dimensions.values() if isinstance(d, dict) and d.get("type") == "temporal")
 
+        seen_spatial = set()
         for name, dim in cube_dimensions.items():
             if not isinstance(dim, dict):
                 continue
 
-            dim_type = dim.get("type")
+            dim_type = str(dim.get("type") or "")
             extent = dim.get("extent", [None, None])
 
-            if dim_type == "spatial":
-                dimensions.append(SpatialDimension(name=name, extent=extent))
-            elif dim_type == "temporal":
+            if dim_type == "temporal":
+                if healpix_normalization and n_temporal == 1 and name != "t":
+                    name = "t"
                 dimensions.append(TemporalDimension(name=name, extent=extent))
+            elif dim_type in ("spatial", "healpix") and healpix_normalization:
+                canonical_name = self._canonical_healpix_spatial_dimension_name(name=name, dim_type=dim_type)
+                if canonical_name in seen_spatial:
+                    continue
+                seen_spatial.add(canonical_name)
+                dimensions.append(
+                    SpatialDimension(
+                        name=canonical_name,
+                        extent=extent,
+                        crs=dim.get("reference_system", SpatialDimension.DEFAULT_CRS),
+                        step=dim.get("step"),
+                    )
+                )
+            elif dim_type == "spatial":
+                dimensions.append(SpatialDimension(name=name, extent=extent))
             elif dim_type in ("bands", "spectral"):
                 dimensions.append(BandDimension(name=name, bands=list(bands)))
             else:
                 dimensions.append(Dimension(name=name, type=dim_type))
+
+        if healpix_normalization and not any(isinstance(d, BandDimension) for d in dimensions):
+            # HEALPix cubes are exposed with their band metadata under a `bands`
+            # dimension even when the declared cube:dimensions only describe the
+            # spatial/temporal axes.
+            dimensions.append(BandDimension(name="bands", bands=list(bands)))
 
         return dimensions
 
