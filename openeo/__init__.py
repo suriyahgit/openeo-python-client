@@ -23,7 +23,9 @@ from openeo.rest.vectorcube import VectorCube
 
 
 def client_version() -> str:
-    try:
-        return importlib.metadata.version("openeo")
-    except importlib.metadata.PackageNotFoundError:
-        return __version__
+    for dist_name in ("openeo-python-client-dedl", "openeo"):
+        try:
+            return importlib.metadata.version(dist_name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return __version__
