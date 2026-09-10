@@ -42,6 +42,23 @@ from openeo.rest.auth.testing import OidcMock
 from openeo.util import load_json, rfc3339
 
 
+def _fast_forward_sleep(time_machine, poll_sleep: int = 60):
+    """Mock ``time.sleep`` to fast-forward the manager's polling sleep.
+
+    Patching ``time.sleep`` globally also turns short internal sleeps (e.g. the
+    5s connection-error backoff or 1s token-refresh retry) into 1-hour jumps,
+    which shifts ``running_start_time`` and makes the cancel tests flaky.
+    Only the polling sleep (``== poll_sleep``) advances the mocked clock by an
+    hour; other sleeps (connection-error backoff, token-refresh retries) advance
+    it by their actual duration.
+    """
+
+    def _sleep(seconds):
+        time_machine.shift(60 * 60 if seconds == poll_sleep else seconds)
+
+    return _sleep
+
+
 def _job_id_from_year(process_graph) -> Union[str, None]:
     """Job id generator that extracts the year from the process graph"""
     try:
@@ -600,7 +617,9 @@ class TestMultiBackendJobManager:
         job_db_path = tmp_path / "jobs.csv"
 
         # Mock sleep() to not actually sleep, but skip one hour at a time
-        with mock.patch("time.sleep", new=lambda s: time_machine.shift(60 * 60)):
+        with mock.patch.object(MultiBackendJobManager, "_refresh_bearer_token", return_value=None), mock.patch(
+            "time.sleep", new=_fast_forward_sleep(time_machine)
+        ):
             job_manager.run_jobs(df=df, start_job=self._create_year_job, job_db=job_db_path)
 
         final_df = CsvJobDatabase(job_db_path).read()
@@ -719,7 +738,9 @@ class TestMultiBackendJobManager:
         job_db_path = tmp_path / "jobs.csv"
 
         # Mock sleep() to skip one hour at a time instead of actually sleeping
-        with mock.patch("time.sleep", new=lambda s: time_machine.shift(60 * 60)):
+        with mock.patch.object(MultiBackendJobManager, "_refresh_bearer_token", return_value=None), mock.patch(
+            "time.sleep", new=_fast_forward_sleep(time_machine)
+        ):
             job_manager.run_jobs(df=df, start_job=self._create_year_job, job_db=job_db_path)
 
         final_df = CsvJobDatabase(job_db_path).read()

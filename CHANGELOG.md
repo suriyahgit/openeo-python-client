@@ -11,13 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `metadata_from_stac()` now detects the real spatial dimensions from a STAC object's `cube:dimensions` (consulting a Collection's items when it does not declare them itself), instead of always falling back to generic `x`/`y`. HEALPix spatial axes (`type: "healpix"` or cell-id aliases such as `cell_ids`/`cells`, including grid-qualified forms like `3km/healpix_index`) are normalised to a single `healpix_index` dimension, and a sole declared `time` temporal axis is mapped to the standard `t` name — matching how back-ends expose such cubes, so dimension-referencing processes (e.g. `reduce_dimension(dimension="t")`, `rename_dimension("healpix_index")`) pass client-side validation.
-
 ### Removed
 
 ### Fixed
 
-- `XarrayDataCube` now normalizes `datetime64` coordinates to nanosecond resolution, so data cubes remain comparable across xarray/numpy versions that preserve non-nanosecond datetime resolution (e.g. after a netCDF round-trip). This makes the `xarray<2025.01.2` upper bound unnecessary ([#721](https://github.com/Open-EO/openeo-python-client/issues/721)).
+- Make the `MultiBackendJobManager` job-cancellation tests robust against extra internal `time.sleep()` calls (connection-error backoff, token-refresh retries) that made them flaky in CI.
+
+
+## [2026.9.0] - 2026-09-10
+
+DEDL fork release, based on upstream `0.53.0a1`, including upstream PR #867, HEALPix STAC `cube:dimensions` normalisation, the non-nanosecond xarray datetime fix ([#721](https://github.com/Open-EO/openeo-python-client/issues/721)), and GitLab CI/packaging as `openeo-python-client-dedl`.
+
+### Changed
+
+- `metadata_from_stac()` now detects the real spatial dimensions from a STAC object's `cube:dimensions` (consulting a Collection's items when it does not declare them itself), instead of always falling back to generic `x`/`y`. HEALPix spatial axes (`type: "healpix"` or cell-id aliases such as `cell_ids`/`cells`, including grid-qualified forms like `3km/healpix_index`) are normalised to a single `healpix_index` dimension, and a sole declared `time` temporal axis is mapped to the standard `t` name — matching how back-ends expose such cubes, so dimension-referencing processes (e.g. `reduce_dimension(dimension="t")`, `rename_dimension("healpix_index")`) pass client-side validation.
+- The DEDL fork is packaged as `openeo-python-client-dedl` (import package remains `openeo`). A runtime warning is emitted when both the upstream `openeo` and `openeo-python-client-dedl` distributions are installed, as they provide the same `openeo` package.
+
+### Fixed
+
+- `XarrayDataCube` now normalizes `datetime64` coordinates to nanosecond resolution, so data cubes remain comparable across xarray/numpy versions that preserve non-nanosecond datetime resolution (e.g. after a netCDF round-trip). This makes the `xarray<2025.01.2` upper bound unnecessary.
 
 
 ## [0.52.0] - 2026-09-08

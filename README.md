@@ -4,6 +4,12 @@
 > **DEDL fork.** This is the EUMETSAT DEDL fork of the openEO Python client, distributed as
 > `openeo-python-client-dedl` (the import package remains `openeo`). Upstream project:
 > https://github.com/Open-EO/openeo-python-client
+>
+> Do **not** install it alongside the upstream `openeo` distribution — both provide the same
+> `openeo` import package. Uninstall one first (`pip uninstall openeo` or
+> `pip uninstall openeo-python-client-dedl`) or use a separate virtual environment. The
+> runtime app name and config/refresh-token paths stay `openeo-python-client` for drop-in
+> compatibility; set `OPENEO_CONFIG_HOME` (and/or `OPENEO_CLIENT_CONFIG`) to isolate them.
 
 
 # openEO Python Client

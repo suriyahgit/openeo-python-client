@@ -8,6 +8,32 @@ unlocking the openEO ecosystem to a broad audience.
 The package is a pure Python implementation and its dependencies are carefully considered (in number and complexity).
 
 
+DEDL fork
+=========
+
+This repository is the EUMETSAT DEDL fork of the openEO Python client,
+distributed as ``openeo-python-client-dedl`` (the import package remains ``openeo``).
+It is available from the DEDL GitLab package registry.
+
+.. warning::
+
+    Do not install ``openeo-python-client-dedl`` alongside the upstream ``openeo``
+    distribution: both provide the same ``openeo`` import package. Uninstall one before
+    installing the other, for example:
+
+    .. code-block:: console
+
+        $ pip uninstall openeo
+        $ pip install openeo-python-client-dedl
+
+    or use a separate virtual environment.
+
+The runtime app name and the config/refresh-token locations remain
+``openeo-python-client`` for drop-in compatibility with existing setups. To isolate them
+(e.g. when using both clients on one machine), set ``OPENEO_CONFIG_HOME`` (this moves both
+the config and data/token directories) and/or ``OPENEO_CLIENT_CONFIG`` (the config file path).
+
+
 Basic install
 =============
 
