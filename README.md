@@ -1,10 +1,9 @@
 
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/openeo)
-![Status](https://img.shields.io/pypi/status/openeo)
-[![Lint](https://github.com/Open-EO/openeo-python-client/actions/workflows/lint.yml/badge.svg?branch=master)](https://github.com/Open-EO/openeo-python-client/actions/workflows/lint.yml)
-[![Tests](https://github.com/Open-EO/openeo-python-client/actions/workflows/unittests.yml/badge.svg?branch=master)](https://github.com/Open-EO/openeo-python-client/actions/workflows/unittests.yml)
-[![PyPI](https://img.shields.io/pypi/v/openeo)](https://pypi.org/project/openeo/)
-[![Conda (channel only)](https://img.shields.io/conda/vn/conda-forge/openeo)](https://anaconda.org/conda-forge/openeo)
+[![pipeline status](https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl/badges/dedl-client-main/pipeline.svg)](https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl/-/commits/dedl-client-main)
+
+> **DEDL fork.** This is the EUMETSAT DEDL fork of the openEO Python client, distributed as
+> `openeo-python-client-dedl` (the import package remains `openeo`). Upstream project:
+> https://github.com/Open-EO/openeo-python-client
 
 
 # openEO Python Client

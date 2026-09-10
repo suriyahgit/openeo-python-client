@@ -125,13 +125,13 @@ html_theme_options = {
     },
     "icon_links": [
         {
-            "name": "GitHub",
-            "url": "https://github.com/Open-EO/openeo-python-client",
-            "icon": "fa-brands fa-github",
+            "name": "GitLab",
+            "url": "https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl",
+            "icon": "fa-brands fa-gitlab",
         },
         {
-            "name": "PyPI",
-            "url": "https://pypi.org/project/openeo/",
+            "name": "Package registry",
+            "url": "https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl/-/packages",
             "icon": "fa-solid fa-box",
         },
         {
