@@ -31,6 +31,27 @@ def test_xarraydatacube_from_dict_minimal():
     }
 
 
+def test_xarraydatacube_normalizes_datetime_coords():
+    # https://github.com/Open-EO/openeo-python-client/issues/721
+    array = xarray.DataArray(
+        numpy.zeros(shape=(2,)),
+        coords={"t": numpy.array(["2020-08-01", "2020-08-11"], dtype="datetime64[s]")},
+        dims=("t",),
+    )
+    xdc = XarrayDataCube(array=array)
+    assert xdc.array.coords["t"].dtype == numpy.dtype("datetime64[ns]")
+
+    # Cubes differing only in datetime resolution compare equal after normalization
+    same = XarrayDataCube(
+        xarray.DataArray(
+            numpy.zeros(shape=(2,)),
+            coords={"t": numpy.array(["2020-08-01", "2020-08-11"], dtype="datetime64[ns]")},
+            dims=("t",),
+        )
+    )
+    xarray.testing.assert_equal(xdc.array, same.array)
+
+
 def test_xarraydatacube_to_dict():
     array = xarray.DataArray(
         numpy.zeros(shape=(2, 3)),

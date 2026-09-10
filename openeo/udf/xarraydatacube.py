@@ -30,7 +30,27 @@ class XarrayDataCube:
     def __init__(self, array: xarray.DataArray):
         if not isinstance(array, xarray.DataArray):
             raise OpenEoUdfException("Argument data must be of type xarray.DataArray")
-        self._array = array
+        self._array = self._normalize_datetime_coords(array)
+
+    @staticmethod
+    def _normalize_datetime_coords(array: xarray.DataArray) -> xarray.DataArray:
+        """Normalize datetime64 coordinates to a consistent (nanosecond) resolution.
+
+        xarray >= 2025.01.2 preserves non-nanosecond datetime64 resolution from
+        numpy and from CF decoding, so two otherwise-equal data cubes can differ
+        only in coordinate resolution (e.g. ``datetime64[s]`` in memory vs
+        ``datetime64[ns]`` after a netCDF round-trip). Normalizing datetime
+        coordinates to nanosecond resolution keeps data cubes comparable
+        regardless of the xarray/numpy version. See
+        https://github.com/Open-EO/openeo-python-client/issues/721
+        """
+        normalized = {}
+        for name, coord in array.coords.items():
+            if numpy.issubdtype(coord.dtype, numpy.datetime64) and coord.dtype != numpy.dtype("datetime64[ns]"):
+                normalized[name] = coord.astype("datetime64[ns]")
+        if normalized:
+            array = array.assign_coords(normalized)
+        return array
 
     def __repr__(self):
         return f"<{type(self).__name__} shape:{self._array.shape}>"

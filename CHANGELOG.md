@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `XarrayDataCube` now normalizes `datetime64` coordinates to nanosecond resolution, so data cubes remain comparable across xarray/numpy versions that preserve non-nanosecond datetime resolution (e.g. after a netCDF round-trip). This makes the `xarray<2025.01.2` upper bound unnecessary ([#721](https://github.com/Open-EO/openeo-python-client/issues/721)).
+
 
 ## [0.52.0] - 2026-09-08
 
