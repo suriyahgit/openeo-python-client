@@ -62,16 +62,16 @@ artifacts_require = ["boto3", "botocore"]
 
 typing_requires = ["types-boto3-s3", "types-boto3-sts"]
 
-name = "openeo"
+name = "openeo-python-client-dedl"
 setup(
     name=name,
     version=_version["__version__"],
     author="Jeroen Dries",
     author_email="jeroen.dries@vito.be",
-    description="Client API for openEO",
+    description="Client API for openEO (DEDL fork)",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Open-EO/openeo-python-client",
+    url="https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl",
     python_requires=">=3.8",
     packages=find_packages(include=["openeo*"]),
     include_package_data=True,
@@ -120,9 +120,9 @@ setup(
         "Operating System :: OS Independent",
     ],
     project_urls={
-        "Documentation": "https://open-eo.github.io/openeo-python-client/",
-        "Source Code": "https://github.com/Open-EO/openeo-python-client",
-        "Bug Tracker": "https://github.com/Open-EO/openeo-python-client/issues",
-        "Changelog": "https://github.com/Open-EO/openeo-python-client/blob/master/CHANGELOG.md",
+        "Documentation": "https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl/-/blob/master/README.md",
+        "Source Code": "https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl",
+        "Bug Tracker": "https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl/-/issues",
+        "Changelog": "https://gitlab.eumetsat.int/dedl-cube/openeo-python-client-dedl/-/blob/master/CHANGELOG.md",
     },
 )
