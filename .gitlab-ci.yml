@@ -1,12 +1,11 @@
 # GitLab CI for the DEDL openeo-python-client fork.
-# Ported from the GitHub Actions workflows (lint, unittests, build-wheel, sphinx docs).
+# Ported from the GitHub Actions workflows (lint, unittests, build-wheel).
 
 stages:
   - lint
   - test
   - build
   - publish
-  - pages
 
 variables:
   PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.cache/pip"
@@ -76,15 +75,3 @@ publish-package:
     - python -m twine upload --repository-url "${PACKAGE_REGISTRY_URL}" -u gitlab-ci-token -p "${CI_JOB_TOKEN}" dist/*
   rules:
     - if: $CI_COMMIT_TAG
-
-pages:
-  stage: pages
-  script:
-    - python -m pip install --upgrade pip
-    - python -m pip install ".[docs]"
-    - python -m sphinx -b html docs public
-  artifacts:
-    paths:
-      - public
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
